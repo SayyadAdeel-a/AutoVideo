@@ -1,4 +1,3 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 
 export const generateRemotionCode = async (topic: string, script: string, style: string, duration: number) => {
@@ -6,50 +5,35 @@ export const generateRemotionCode = async (topic: string, script: string, style:
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
   const systemInstruction = `
-    You are a world-class Remotion engineer. 
-    Your task is to generate valid TypeScript React code for a Remotion composition.
+    You are a world-class Remotion developer.
+    Your task: Generate a high-quality React + Remotion component for a video.
     
-    CRITICAL RULES:
-    1. The component MUST be exported as a NAMED export: export const Main = () => { ... }
-    2. Do NOT use default exports.
-    3. Import components ONLY from 'remotion' or 'lucide-react' (if needed).
-    4. Topic: ${topic}.
-    5. Script: ${script}.
-    6. Duration: ${duration} seconds.
-    7. Style: ${style}.
-    8. Use AbsoluteFill, useCurrentFrame, useVideoConfig, Interpolate, spring for animations.
-    9. Ensure the code is self-contained and syntactically perfect.
-    10. Return ONLY the code in a JSON field named "code".
+    CRITICAL TECHNICAL REQUIREMENTS:
+    1. EXPORT TYPE: Use a named export for the main component: 'export const Main = (props: any) => { ... }'.
+    2. IMPORTS: Include all necessary imports from 'remotion' and 'react'.
+    3. ANIMATIONS: Use 'AbsoluteFill', 'useCurrentFrame', 'useVideoConfig', 'interpolate', and 'spring'.
+    4. PROPS: Use props for dynamic content (topic, script).
+    5. DESIGN: Make it visually stunning. Use gradients, modern typography, and smooth transitions.
+    6. STYLE: Adhere to the "${style}" aesthetic.
+    7. NO MARKDOWN: Output ONLY the raw TypeScript code. No backticks, no explanations.
+    
+    The video is about "${topic}". 
+    The script to visualize is: "${script}".
+    The total duration is ${duration} seconds.
   `;
 
   const response = await ai.models.generateContent({
     model,
-    contents: `Generate a Remotion TSX file for a video about "${topic}" with this script: "${script}". Duration: ${duration}s. Style: ${style}.`,
+    contents: `Topic: ${topic}\nScript: ${script}\nStyle: ${style}\nDuration: ${duration}s`,
     config: {
       systemInstruction,
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          code: {
-            type: Type.STRING,
-            description: "The complete valid TSX code with a named export 'Main'."
-          }
-        },
-        required: ["code"]
-      }
-    }
+      responseMimeType: "text/plain", // We want raw code
+    },
   });
 
-  const text = response.text;
-  if (!text) throw new Error("Empty response from Gemini");
+  const code = response.text;
+  if (!code) throw new Error("Gemini returned an empty response.");
 
-  try {
-    const result = JSON.parse(text);
-    // Sanitize any potential markdown wrappers if the model ignored responseMimeType
-    return result.code.replace(/```tsx|```/g, '').trim();
-  } catch (e) {
-    console.error("Failed to parse Gemini JSON:", text);
-    throw new Error("Invalid code format received from AI");
-  }
+  // Clean code if Gemini adds markdown markers despite instructions
+  return code.replace(/```tsx/g, '').replace(/```typescript/g, '').replace(/```/g, '').trim();
 };

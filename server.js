@@ -1,4 +1,3 @@
-
 import express from 'express';
 import cors from 'cors';
 import { bundle } from '@remotion/bundler';
@@ -12,7 +11,7 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
 
 const JOBS = new Map();
 const RENDER_DIR = path.join(__dirname, 'renders');
@@ -22,27 +21,32 @@ fs.ensureDirSync(RENDER_DIR);
 fs.ensureDirSync(TEMP_DIR);
 
 app.get('/status', (req, res) => {
-  res.json({ status: 'online', engine: 'Remotion 4.x' });
+  res.json({ status: 'online', engine: 'Remotion 4.x', uptime: process.uptime() });
 });
 
 app.post('/render', async (req, res) => {
   const { compositionCode, topic, props } = req.body;
-  const jobId = Math.random().toString(36).substring(7);
   
+  if (!compositionCode) {
+    return res.status(400).json({ error: 'Missing compositionCode' });
+  }
+
+  const jobId = Math.random().toString(36).substring(7);
   const jobPath = path.join(TEMP_DIR, jobId);
   fs.ensureDirSync(jobPath);
 
   const compFile = path.join(jobPath, 'Composition.tsx');
   const entryFile = path.join(jobPath, 'index.tsx');
 
-  // Handle various potential output formats from Gemini
-  const cleanedCode = compositionCode.includes('import') 
-    ? compositionCode 
-    : `import React from 'react';\nimport { AbsoluteFill } from 'remotion';\n\n${compositionCode}`;
+  // Ensure code has React import if missing
+  let finalCode = compositionCode;
+  if (!finalCode.includes("import React")) {
+    finalCode = `import React from 'react';\n${finalCode}`;
+  }
 
-  await fs.writeFile(compFile, cleanedCode);
+  await fs.writeFile(compFile, finalCode);
   
-  // Create a robust entry file that handles both named and default exports
+  // Entry point handles dynamic registration
   await fs.writeFile(entryFile, `
     import { registerRoot, Composition } from 'remotion';
     import * as CompNamespace from './Composition';
@@ -50,7 +54,7 @@ app.post('/render', async (req, res) => {
     const Main = CompNamespace.Main || CompNamespace.default;
 
     if (!Main) {
-      throw new Error("Could not find a 'Main' component or a default export in the generated code.");
+      console.error("No Main component found in generated code.");
     }
 
     const MyRoot = () => {
@@ -75,23 +79,22 @@ app.post('/render', async (req, res) => {
   JOBS.set(jobId, { status: 'Rendering', progress: 0, topic, createdAt: new Date().toISOString() });
   res.json({ jobId });
 
+  // Background process
   (async () => {
     try {
-      console.log(`[Job ${jobId}] Bundling...`);
+      console.log(`[${jobId}] Starting build...`);
       const bundleLocation = await bundle({
         entryPoint: entryFile,
-        // Ensure the bundler can find React and Remotion from the root node_modules
-        webpackOverride: (config) => config,
       });
 
-      console.log(`[Job ${jobId}] Selecting composition...`);
+      console.log(`[${jobId}] Selecting composition 'Main'...`);
       const composition = await selectComposition({
         serveUrl: bundleLocation,
         id: 'Main',
         inputProps: props,
       });
 
-      console.log(`[Job ${jobId}] Rendering to MP4...`);
+      console.log(`[${jobId}] Rendering media...`);
       const outputLocation = path.join(RENDER_DIR, `${jobId}.mp4`);
       
       await renderMedia({
@@ -110,11 +113,11 @@ app.post('/render', async (req, res) => {
         progress: 100, 
         downloadUrl: `http://localhost:3000/download/${jobId}` 
       });
-      console.log(`[Job ${jobId}] Completed successfully.`);
+      console.log(`[${jobId}] SUCCESS: Video rendered to ${outputLocation}`);
       
       await fs.remove(jobPath);
     } catch (err) {
-      console.error(`[Job ${jobId}] Render Error:`, err.message);
+      console.error(`[${jobId}] FATAL RENDER ERROR:`, err.message);
       JOBS.set(jobId, { 
         ...JOBS.get(jobId), 
         status: 'Failed', 
@@ -136,14 +139,11 @@ app.get('/download/:id', (req, res) => {
   if (fs.existsSync(filePath)) {
     res.download(filePath);
   } else {
-    res.status(404).send('Video file not found. It might have been deleted or render failed.');
+    res.status(404).send('File not found');
   }
 });
 
 const PORT = 3000;
 app.listen(PORT, () => {
-  console.log('-------------------------------------------');
-  console.log(`AutoVideo Engine Bridge is LIVE on port ${PORT}`);
-  console.log(`Ensure you have FFmpeg installed on your system!`);
-  console.log('-------------------------------------------');
+  console.log(`AutoVideo Local Bridge Active: http://localhost:${PORT}`);
 });
