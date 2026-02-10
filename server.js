@@ -12,7 +12,7 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 const JOBS = new Map();
 const RENDER_DIR = path.join(__dirname, 'renders');
@@ -29,31 +29,30 @@ app.post('/render', async (req, res) => {
   const { compositionCode, topic, props } = req.body;
   const jobId = Math.random().toString(36).substring(7);
   
-  const jobPath = path.join(TEMP_DIR, `${jobId}`);
+  const jobPath = path.join(TEMP_DIR, jobId);
   fs.ensureDirSync(jobPath);
 
-  // 1. Create entry file and composition file
   const compFile = path.join(jobPath, 'Composition.tsx');
   const entryFile = path.join(jobPath, 'index.tsx');
 
-  // Clean up code from possible backticks
-  const cleanedCode = compositionCode.replace(/```tsx|```/g, '');
+  // Handle various potential output formats from Gemini
+  const cleanedCode = compositionCode.includes('import') 
+    ? compositionCode 
+    : `import React from 'react';\nimport { AbsoluteFill } from 'remotion';\n\n${compositionCode}`;
 
   await fs.writeFile(compFile, cleanedCode);
+  
+  // Create a robust entry file that handles both named and default exports
   await fs.writeFile(entryFile, `
-    import { registerRoot } from 'remotion';
-    import { Main } from './Composition';
+    import { registerRoot, Composition } from 'remotion';
+    import * as CompNamespace from './Composition';
     
-    const RemotionRoot = () => {
-      return (
-        <registerRoot>
-          <Main />
-        </registerRoot>
-      );
-    };
+    const Main = CompNamespace.Main || CompNamespace.default;
 
-    // Need to register it correctly for bundling
-    import { Composition } from 'remotion';
+    if (!Main) {
+      throw new Error("Could not find a 'Main' component or a default export in the generated code.");
+    }
+
     const MyRoot = () => {
       return (
         <>
@@ -73,17 +72,15 @@ app.post('/render', async (req, res) => {
     registerRoot(MyRoot);
   `);
 
-  JOBS.set(jobId, { status: 'Rendering', progress: 0, topic });
-
-  // Respond immediately with Job ID
+  JOBS.set(jobId, { status: 'Rendering', progress: 0, topic, createdAt: new Date().toISOString() });
   res.json({ jobId });
 
-  // 2. Start Background Render
   (async () => {
     try {
-      console.log(`[Job ${jobId}] Starting bundle...`);
+      console.log(`[Job ${jobId}] Bundling...`);
       const bundleLocation = await bundle({
         entryPoint: entryFile,
+        // Ensure the bundler can find React and Remotion from the root node_modules
         webpackOverride: (config) => config,
       });
 
@@ -94,7 +91,7 @@ app.post('/render', async (req, res) => {
         inputProps: props,
       });
 
-      console.log(`[Job ${jobId}] Rendering media...`);
+      console.log(`[Job ${jobId}] Rendering to MP4...`);
       const outputLocation = path.join(RENDER_DIR, `${jobId}.mp4`);
       
       await renderMedia({
@@ -108,17 +105,22 @@ app.post('/render', async (req, res) => {
       });
 
       JOBS.set(jobId, { 
+        ...JOBS.get(jobId),
         status: 'Completed', 
         progress: 100, 
         downloadUrl: `http://localhost:3000/download/${jobId}` 
       });
-      console.log(`[Job ${jobId}] Finished.`);
+      console.log(`[Job ${jobId}] Completed successfully.`);
       
-      // Cleanup temp files
       await fs.remove(jobPath);
     } catch (err) {
-      console.error(`[Job ${jobId}] Error:`, err);
-      JOBS.set(jobId, { status: 'Failed', error: err.message, progress: 0 });
+      console.error(`[Job ${jobId}] Render Error:`, err.message);
+      JOBS.set(jobId, { 
+        ...JOBS.get(jobId), 
+        status: 'Failed', 
+        error: err.message, 
+        progress: 0 
+      });
     }
   })();
 });
@@ -134,11 +136,14 @@ app.get('/download/:id', (req, res) => {
   if (fs.existsSync(filePath)) {
     res.download(filePath);
   } else {
-    res.status(404).send('File not found');
+    res.status(404).send('Video file not found. It might have been deleted or render failed.');
   }
 });
 
 const PORT = 3000;
 app.listen(PORT, () => {
-  console.log(`AutoVideo Local Bridge running at http://localhost:${PORT}`);
+  console.log('-------------------------------------------');
+  console.log(`AutoVideo Engine Bridge is LIVE on port ${PORT}`);
+  console.log(`Ensure you have FFmpeg installed on your system!`);
+  console.log('-------------------------------------------');
 });
