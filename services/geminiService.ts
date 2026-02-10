@@ -1,11 +1,13 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
-
 export const generateRemotionCode = async (topic: string, script: string, style: string, duration: number) => {
+  // Use the latest recommended model for complex coding tasks
   const model = 'gemini-3-pro-preview';
   
+  // Initialize AI instance exactly as required by guidelines
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
   const systemInstruction = `
     You are a world-class Remotion engineer. 
     Your task is to generate valid TypeScript React code for a Remotion composition.
@@ -43,6 +45,9 @@ export const generateRemotionCode = async (topic: string, script: string, style:
     }
   });
 
-  const result = JSON.parse(response.text);
+  const text = response.text;
+  if (!text) throw new Error("Empty response from Gemini");
+
+  const result = JSON.parse(text);
   return result.code as string;
 };
