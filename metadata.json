@@ -1,0 +1,5 @@
+{
+  "name": "AutoVideo AI",
+  "description": "An AI-powered video generation platform that uses Gemini to generate Remotion code and renders it locally or in the cloud.",
+  "requestFramePermissions": []
+}
